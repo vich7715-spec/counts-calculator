@@ -8,7 +8,7 @@
 <title>計數計算器</title>
 <style>
 body {
-  font-family: Arial;
+  font-family: Arial, sans-serif;
   text-align: center;
   padding: 40px;
   background: #f5f5f5;
@@ -33,19 +33,31 @@ button {
 <button onclick="change(1)">＋1</button>
 <button onclick="reset()">歸零</button>
 
+<p>數字會自動儲存在這個瀏覽器中</p>
+
 <script>
-let count = 0;
+let count = Number(
+  localStorage.getItem("savedCount") ?? 0
+);
+
+if (!Number.isFinite(count)) count = 0;
+
+showCount();
+
+function showCount() {
+  document.getElementById("number").textContent = count;
+  localStorage.setItem("savedCount", String(count));
+}
 
 function change(n) {
   count += n;
-  document.getElementById("number").textContent = count;
+  showCount();
 }
 
 function reset() {
   count = 0;
-  document.getElementById("number").textContent = count;
+  showCount();
 }
 </script>
 </body>
 </html>
-  
