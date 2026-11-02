@@ -1,0 +1,29 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>計數計算器</title>
+</head>
+<body style="text-align:center">
+<h1>計數計算器</h1>
+<h2 id="count">0</h2>
+
+<button onclick="change(-1)">－1</button>
+<button onclick="change(1)">＋1</button>
+<button onclick="reset()">歸零</button>
+
+<script>
+let count = 0;
+function change(n) {
+  count += n;
+  document.getElementById("count").textContent = count;
+}
+function reset() {
+  count = 0;
+  document.getElementById("count").textContent = count;
+}
+</script>
+</body>
+</html>
+  
