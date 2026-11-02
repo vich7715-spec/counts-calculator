@@ -3,11 +3,31 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport"
+ content="width=device-width, initial-scale=1">
 <title>計數計算器</title>
+<style>
+body {
+  font-family: Arial;
+  text-align: center;
+  padding: 40px;
+  background: #f5f5f5;
+}
+button {
+  font-size: 24px;
+  padding: 12px 22px;
+  margin: 5px;
+  cursor: pointer;
+}
+#number {
+  font-size: 60px;
+  color: green;
+}
+</style>
 </head>
-<body style="text-align:center">
+<body>
 <h1>計數計算器</h1>
-<h2 id="count">0</h2>
+<div id="number">0</div>
 
 <button onclick="change(-1)">－1</button>
 <button onclick="change(1)">＋1</button>
@@ -15,13 +35,15 @@
 
 <script>
 let count = 0;
+
 function change(n) {
   count += n;
-  document.getElementById("count").textContent = count;
+  document.getElementById("number").textContent = count;
 }
+
 function reset() {
   count = 0;
-  document.getElementById("count").textContent = count;
+  document.getElementById("number").textContent = count;
 }
 </script>
 </body>
