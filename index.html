@@ -3,60 +3,312 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport"
- content="width=device-width, initial-scale=1">
-<title>計數計算器</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>前處理 counts 積分系統</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
-body {
-  font-family: Arial, sans-serif;
-  text-align: center;
-  padding: 40px;
-  background: #f5f5f5;
-}
-button {
-  font-size: 24px;
-  padding: 12px 22px;
-  margin: 5px;
-  cursor: pointer;
-}
-#number {
-  font-size: 60px;
-  color: green;
-}
+body{font-family:Arial,"Microsoft JhengHei",sans-serif;background:#f3f6fa;color:#183047;margin:0;padding:24px}
+main{max-width:1200px;margin:auto}
+h1{color:#174c7e}
+section{background:white;padding:20px;border-radius:12px;margin:16px 0;box-shadow:0 2px 8px #0001}
+button,input,select{font-size:15px;padding:10px;margin:5px}
+button{background:#226ba8;color:white;border:0;border-radius:7px;cursor:pointer}
+button:disabled{background:#aaa}
+table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
+th,td{padding:9px;border:1px solid #d8e0e8;text-align:left}
+th{background:#dceafa}
+.num{text-align:right}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.card{background:#eaf3fc;padding:15px;border-radius:8px}
+.card strong{display:block;font-size:24px;margin-top:8px}
+.good{color:#087b43}
+.bad{color:#b3261e}
+.note{color:#64748b}
+.scroll{overflow-x:auto}
 </style>
 </head>
 <body>
-<h1>計數計算器</h1>
-<div id="number">0</div>
+<main>
+<h1>前處理人員 counts 自動積分系統</h1>
+<p>匯入每月 Excel，自動統計人員積分並驗證計算。</p>
 
-<button onclick="change(-1)">－1</button>
-<button onclick="change(1)">＋1</button>
-<button onclick="reset()">歸零</button>
+<section>
+<h2>1. 匯入 Excel</h2>
+<input type="file" id="file" accept=".xlsx,.xls">
+<button onclick="loadExcel()">開始計算</button>
+<p id="status" class="note">請選擇 Excel 檔案。</p>
+</section>
 
-<p>數字會自動儲存在這個瀏覽器中</p>
+<section>
+<h2>2. 統計結果</h2>
+<div class="cards" id="summary"></div>
+</section>
+
+<section>
+<h2>3. 人員積分總表</h2>
+<button onclick="exportCSV('people')">匯出人員總表</button>
+<div class="scroll" id="people"></div>
+</section>
+
+<section>
+<h2>4. 執行內容明細</h2>
+<button onclick="exportCSV('details')">匯出工作明細</button>
+<div class="scroll" id="details"></div>
+</section>
+
+<section>
+<h2>5. 數據驗證</h2>
+<div id="validation"></div>
+<button onclick="exportCSV('errors')">匯出異常清單</button>
+<div class="scroll" id="errors"></div>
+</section>
+</main>
 
 <script>
-let count = Number(
-  localStorage.getItem("savedCount") ?? 0
-);
+// 最新對應積分表：工作名稱|每筆 counts
+const rulesText = `
+metal Coating(ALD)|0.1
+metal Coating(Sputter)|0.1
+上Dummy|0.1
+打plasma|0.1
+抽真空|0.1
+烘箱|0.1
+烤盤|0.1
+超音波震盪|0.1
+others|0.1
+上銀膠|0.1
+綁holder|0.1
+拍照|0.2
+chip裂片|0.2
+打mark|0.2
+metal Coating(PECS)|0.5
+上Duo自然乾|0.5
+上Duo烤乾|0.5
+上Duo烤盤|0.5
+上G1烤乾|0.5
+上G1烤盤|0.5
+上投影筆|0.5
+加切資訊確認|0.5
+去膠|0.5
+報告|0.5
+晶粒黏貼|0.5
+裁切樣品-慢速切割機|0.5
+確認重工位置|0.5
+玻璃chip裂片|0.5
+UV固化|0.5
+非上膠打mark|0.5
+綁holder-樣品不平|1
+找位置|1
+mask裂片|1
+wafer裂片|1.5
+上M-bond UV固化|1
+上M-bond自然乾|1
+上M-bond烤乾|1
+上M-bond烤盤|1
+wafer裂片-T5|1.5
+玻璃wafer裂片|1.5
+定點裂片|1.5
+CNT薄膜取樣|1.5
+上G1烤乾-40um以上|1.5
+上G1烤盤-40um以上|1.5
+上UV固化-40um以上|1.5
+糖果紙薄膜取樣|1.5
+爆裂物薄膜取樣|1.5
+上M-bond烤乾-40um以上|1.5
+上M-bond烤盤-40um以上|1.5
+BOE|1.5
+DHF|1.5
+H2O2|1.5
+PAD|1.5
+封膠作業|2
+特殊找位置(Defect)|2
+SC1|3
+去LEAD-低階|3
+研磨|3
+去錫球|3
+wafer裂片雙層玻璃|3
+特殊樣品製備|5
+去LEAD-中階|7
+貼合|7
+去LEAD-高階|10
+雷射切割|0
+`;
 
-if (!Number.isFinite(count)) count = 0;
+const normalize = s => String(s ?? "")
+ .normalize("NFKC")
+ .replace(/\s+/g,"")
+ .toLowerCase();
 
-showCount();
+const rules = new Map();
+rulesText.trim().split("\n").forEach(line=>{
+ const i=line.lastIndexOf("|");
+ if(i<0)return;
+ rules.set(normalize(line.slice(0,i)),
+ Number(line.slice(i+1)));
+});
 
-function showCount() {
-  document.getElementById("number").textContent = count;
-  localStorage.setItem("savedCount", String(count));
+let peopleData=[],detailData=[],errorData=[];
+let total=0,matched=0,missing=0,score=0;
+
+function table(headers,rows){
+ let h="<table><thead><tr>";
+ headers.forEach(x=>h+="<th>"+escapeHTML(x)+"</th>");
+ h+="</tr></thead><tbody>";
+ rows.forEach(row=>{
+ h+="<tr>";
+ row.forEach(v=>h+="<td>"+escapeHTML(v)+"</td>");
+ h+="</tr>";
+ });
+ return h+"</tbody></table>";
 }
 
-function change(n) {
-  count += n;
-  showCount();
+function escapeHTML(s){
+ return String(s??"").replace(/[&<>"']/g,c=>({
+ "&":"&amp;","<":"&lt;",">":"&gt;",
+ '"':"&quot;","'":"&#39;"
+ })[c]);
 }
 
-function reset() {
-  count = 0;
-  showCount();
+function round(n){return Math.round((n+Number.EPSILON)*1000)/1000;}
+
+async function loadExcel(){
+ const file=document.getElementById("file").files[0];
+ if(!file){alert("請先選擇 Excel");return;}
+ if(typeof XLSX==="undefined"){
+ alert("Excel 函式庫尚未載入，請確認網路連線");
+ return;
+ }
+ try{
+ const buffer=await file.arrayBuffer();
+ const wb=XLSX.read(buffer,{type:"array"});
+ let sheet=null,headers=null,start=0;
+ for(const name of wb.SheetNames){
+ const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{
+ header:1,defval:""
+ });
+ for(let i=0;i<Math.min(rows.length,30);i++){
+ const h=rows[i].map(normalize);
+ if(["組別","執行內容","執行人員"].every(x=>h.includes(normalize(x)))){
+ sheet=rows;headers=h;start=i+1;break;
+ }
+ }
+ if(sheet)break;
+ }
+ if(!sheet)throw Error("找不到組別、執行內容、執行人員三個欄位");
+
+ const gi=headers.indexOf(normalize("組別"));
+ const wi=headers.indexOf(normalize("執行內容"));
+ const pi=headers.indexOf(normalize("執行人員"));
+
+ const personMap=new Map(),detailMap=new Map();
+ errorData=[];total=0;matched=0;missing=0;score=0;
+
+ sheet.slice(start).forEach((row,j)=>{
+ if(normalize(row[gi])!=="前處理")return;
+ total++;
+ const work=String(row[wi]??"").trim();
+ const person=String(row[pi]??"").trim();
+ const key=normalize(work);
+ if(!work||!person||!rules.has(key)){
+ missing++;
+ errorData.push([
+ start+j+1,person,work,
+ !work||!person?"必要欄位空白":"未匹配積分"
+ ]);
+ return;
+ }
+ matched++;
+ const points=rules.get(key);
+ score+=points;
+ if(!personMap.has(person)){
+ personMap.set(person,{count:0,score:0});
+ }
+ const p=personMap.get(person);
+ p.count++;p.score+=points;
+
+ const dk=JSON.stringify([person,key]);
+ if(!detailMap.has(dk)){
+ detailMap.set(dk,{
+ person,work,count:0,points,score:0
+ });
+ }
+ const d=detailMap.get(dk);
+ d.count++;d.score+=points;
+ });
+
+ peopleData=[...personMap].map(([name,p])=>[
+ name,p.count,round(p.score)
+ ]).sort((a,b)=>b[2]-a[2]);
+
+ detailData=[...detailMap.values()].map(d=>[
+ d.person,d.work,d.count,d.points,round(d.score)
+ ]).sort((a,b)=>a[0].localeCompare(b[0],"zh-Hant"));
+
+ document.getElementById("status").textContent=
+ "已完成："+file.name;
+
+ render();
+ }catch(e){
+ alert("匯入失敗："+e.message);
+ }
+}
+
+function render(){
+ const card=(name,value)=>`<div class="card">
+ <span>${name}</span><strong>${value}</strong></div>`;
+
+ document.getElementById("summary").innerHTML=
+ card("前處理總筆數",total)+
+ card("成功匹配",matched)+
+ card("未匹配或缺漏",missing)+
+ card("執行人員",peopleData.length)+
+ card("已匹配總積分",round(score));
+
+ document.getElementById("people").innerHTML=
+ table(["執行人員","工作筆數","總積分"],peopleData);
+
+ document.getElementById("details").innerHTML=
+ table(["執行人員","執行內容","筆數","單筆積分","小計"],detailData);
+
+ const countOK=total===matched+missing;
+ const peopleSum=round(peopleData.reduce((s,r)=>s+r[2],0));
+ const detailSum=round(detailData.reduce((s,r)=>s+r[4],0));
+ const scoreOK=Math.abs(peopleSum-detailSum)<0.001 &&
+ Math.abs(detailSum-round(score))<0.001;
+
+ document.getElementById("validation").innerHTML=
+ `<p class="${countOK?'good':'bad'}">
+ 筆數驗證：${countOK?'通過':'失敗'}
+ (${total} = ${matched} + ${missing})</p>
+ <p class="${scoreOK?'good':'bad'}">
+ 積分驗證：${scoreOK?'通過':'失敗'}
+ （人員總分 ${peopleSum}，明細總分 ${detailSum}）</p>
+ <p class="${missing===0?'good':'bad'}">
+ 資料完整性：${missing===0?'無異常':'有 '+missing+' 筆待確認'}</p>
+ <p class="note">未匹配工作不納入已匹配總積分，
+ 請先核對異常清單。</p>`;
+
+ document.getElementById("errors").innerHTML=
+ table(["Excel列號","執行人員","執行內容","異常原因"],errorData);
+}
+
+function exportCSV(type){
+ const configs={
+ people:[["執行人員","工作筆數","總積分"],peopleData],
+ details:[["執行人員","執行內容","筆數","單筆積分","小計"],detailData],
+ errors:[["Excel列號","執行人員","執行內容","異常原因"],errorData]
+ };
+ const [head,rows]=configs[type];
+ const csv=[head,...rows].map(row=>
+ row.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")
+ ).join("\r\n");
+ const blob=new Blob(["\ufeff"+csv],{
+ type:"text/csv;charset=utf-8"
+ });
+ const url=URL.createObjectURL(blob);
+ const a=document.createElement("a");
+ a.href=url;a.download=type+".csv";a.click();
+ URL.revokeObjectURL(url);
 }
 </script>
 </body>
