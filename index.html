@@ -4,37 +4,42 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>前處理 counts 積分系統</title>
+<title>前處理 counts 自動積分驗證系統 V4</title>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
-body{font-family:Arial,"Microsoft JhengHei",sans-serif;background:#f3f6fa;color:#183047;margin:0;padding:24px}
-main{max-width:1200px;margin:auto}
+*{box-sizing:border-box}
+body{margin:0;padding:20px;background:#f3f6fa;color:#17324d;font-family:Arial,"Microsoft JhengHei",sans-serif}
+main{max-width:1250px;margin:auto}
 h1{color:#174c7e}
-section{background:white;padding:20px;border-radius:12px;margin:16px 0;box-shadow:0 2px 8px #0001}
+h2{margin-top:0}
+section{background:white;padding:22px;margin:18px 0;border-radius:12px;box-shadow:0 2px 8px #0001}
 button,input,select{font-size:15px;padding:10px;margin:5px}
-button{background:#226ba8;color:white;border:0;border-radius:7px;cursor:pointer}
+button{background:#276ca5;color:white;border:0;border-radius:7px;cursor:pointer}
+button:hover{background:#195484}
 button:disabled{background:#aaa}
-table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}
-th,td{padding:9px;border:1px solid #d8e0e8;text-align:left}
-th{background:#dceafa}
-.num{text-align:right}
+input[type=file]{max-width:100%}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
-.card{background:#eaf3fc;padding:15px;border-radius:8px}
-.card strong{display:block;font-size:24px;margin-top:8px}
-.good{color:#087b43}
-.bad{color:#b3261e}
-.note{color:#64748b}
-.scroll{overflow-x:auto}
+.card{background:#eaf2fb;padding:16px;border-radius:10px}
+.card strong{display:block;font-size:25px;margin-top:8px}
+.scroll{overflow-x:auto;max-height:550px}
+table{border-collapse:collapse;width:100%;margin-top:12px;font-size:14px}
+th,td{border:1px solid #d7e1ed;padding:9px;text-align:left}
+th{background:#dceafa;position:sticky;top:0}
+.good{color:#087a43}
+.bad{color:#bd302b}
+.note{color:#63758a}
+.warning{background:#fff4df;padding:12px;border-radius:8px}
+.okbox{background:#e8f7ef;padding:12px;border-radius:8px}
 </style>
 </head>
 <body>
 <main>
-<h1>前處理人員 counts 自動積分系統</h1>
-<p>匯入每月 Excel，自動統計人員積分並驗證計算。</p>
+<h1>前處理人員 counts 自動積分系統 V4</h1>
+<p>每月 Excel 匯入｜人員積分｜個人驗證｜規則核對｜疑似重複提示</p>
 
 <section>
 <h2>1. 匯入 Excel</h2>
-<input type="file" id="file" accept=".xlsx,.xls">
+<input id="file" type="file" accept=".xlsx,.xls">
 <button onclick="loadExcel()">開始計算</button>
 <p id="status" class="note">請選擇 Excel 檔案。</p>
 </section>
@@ -51,7 +56,7 @@ th{background:#dceafa}
 </section>
 
 <section>
-<h2>4. 執行內容明細</h2>
+<h2>4. 工作積分明細</h2>
 <button onclick="exportCSV('details')">匯出工作明細</button>
 <div class="scroll" id="details"></div>
 </section>
@@ -62,11 +67,40 @@ th{background:#dceafa}
 <button onclick="exportCSV('errors')">匯出異常清單</button>
 <div class="scroll" id="errors"></div>
 </section>
+
+<section>
+<h2>6. 個人積分明細驗證</h2>
+<label for="personSelect">選擇執行人員：</label>
+<select id="personSelect" onchange="showPerson()">
+<option value="">請先匯入 Excel</option>
+</select>
+<div id="personResult"></div>
+<button onclick="exportCSV('personal')">匯出個人驗證明細</button>
+</section>
+
+<section>
+<h2>7. 積分規則核對</h2>
+<p class="note">重新核對每項工作的筆數、單筆積分與小計。</p>
+<div id="ruleCheck"></div>
+<button onclick="exportCSV('rules')">匯出規則核對</button>
+</section>
+
+<section>
+<h2>8. 疑似重複紀錄</h2>
+<div class="warning">
+只使用「組別、執行內容、執行人員」三個欄位。
+相同人員多次執行相同工作是正常情況，
+因此這裡僅列出重複候選供人工核對，
+不自動刪除、不扣除積分。
+</div>
+<div id="duplicateResult"></div>
+<button onclick="exportCSV('duplicates')">匯出重複候選</button>
+</section>
 </main>
 
 <script>
-// 最新對應積分表：工作名稱|每筆 counts
-const rulesText = `
+// 最新積分規則
+const rulesText=`
 metal Coating(ALD)|0.1
 metal Coating(Sputter)|0.1
 上Dummy|0.1
@@ -134,181 +168,322 @@ wafer裂片雙層玻璃|3
 雷射切割|0
 `;
 
-const normalize = s => String(s ?? "")
- .normalize("NFKC")
- .replace(/\s+/g,"")
- .toLowerCase();
+const norm=s=>String(s??"")
+.normalize("NFKC").replace(/\s+/g,"").toLowerCase();
 
-const rules = new Map();
+const rules=new Map();
 rulesText.trim().split("\n").forEach(line=>{
- const i=line.lastIndexOf("|");
- if(i<0)return;
- rules.set(normalize(line.slice(0,i)),
- Number(line.slice(i+1)));
+const i=line.lastIndexOf("|");
+if(i<0)return;
+const name=line.slice(0,i);
+const score=Number(line.slice(i+1));
+if(!Number.isFinite(score))throw Error("積分規則錯誤");
+if(rules.has(norm(name)))throw Error("積分規則重複："+name);
+rules.set(norm(name),{name,score});
 });
 
-let peopleData=[],detailData=[],errorData=[];
-let total=0,matched=0,missing=0,score=0;
+let records=[];
+let errors=[];
+let peopleRows=[];
+let detailRows=[];
+let duplicateRows=[];
+let ruleRows=[];
+let total=0,matched=0,missing=0,totalPoints=0;
+let ready=false;
+let sheetName="";
 
-function table(headers,rows){
- let h="<table><thead><tr>";
- headers.forEach(x=>h+="<th>"+escapeHTML(x)+"</th>");
- h+="</tr></thead><tbody>";
- rows.forEach(row=>{
- h+="<tr>";
- row.forEach(v=>h+="<td>"+escapeHTML(v)+"</td>");
- h+="</tr>";
- });
- return h+"</tbody></table>";
+const round=n=>Math.round((n+Number.EPSILON)*1000)/1000;
+const fmt=n=>Number(n).toLocaleString("zh-TW",{maximumFractionDigits:3});
+
+function safe(s){
+return String(s??"").replace(/[&<>"']/g,c=>({
+"&":"&amp;","<":"&lt;",">":"&gt;",
+'"':"&quot;","'":"&#39;"
+})[c]);
 }
 
-function escapeHTML(s){
- return String(s??"").replace(/[&<>"']/g,c=>({
- "&":"&amp;","<":"&lt;",">":"&gt;",
- '"':"&quot;","'":"&#39;"
- })[c]);
+function makeTable(headers,rows){
+let h="<table><thead><tr>";
+headers.forEach(x=>h+="<th>"+safe(x)+"</th>");
+h+="</tr></thead><tbody>";
+rows.forEach(r=>{
+h+="<tr>";
+r.forEach(x=>h+="<td>"+safe(x)+"</td>");
+h+="</tr>";
+});
+return h+"</tbody></table>";
 }
 
-function round(n){return Math.round((n+Number.EPSILON)*1000)/1000;}
+function card(label,value){
+return `<div class="card">${safe(label)}
+<strong>${safe(value)}</strong></div>`;
+}
 
 async function loadExcel(){
- const file=document.getElementById("file").files[0];
- if(!file){alert("請先選擇 Excel");return;}
- if(typeof XLSX==="undefined"){
- alert("Excel 函式庫尚未載入，請確認網路連線");
- return;
- }
- try{
- const buffer=await file.arrayBuffer();
- const wb=XLSX.read(buffer,{type:"array"});
- let sheet=null,headers=null,start=0;
- for(const name of wb.SheetNames){
- const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{
- header:1,defval:""
- });
- for(let i=0;i<Math.min(rows.length,30);i++){
- const h=rows[i].map(normalize);
- if(["組別","執行內容","執行人員"].every(x=>h.includes(normalize(x)))){
- sheet=rows;headers=h;start=i+1;break;
- }
- }
- if(sheet)break;
- }
- if(!sheet)throw Error("找不到組別、執行內容、執行人員三個欄位");
+const f=document.getElementById("file").files[0];
+if(!f){alert("請先選擇 Excel");return;}
+if(typeof XLSX==="undefined"){
+alert("Excel 解析函式庫未載入，請檢查網路");
+return;
+}
+ready=false;
+document.getElementById("status").textContent="讀取中...";
+try{
+const buffer=await f.arrayBuffer();
+const wb=XLSX.read(buffer,{type:"array"});
+let rows=null,header=null,start=-1;
+sheetName="";
 
- const gi=headers.indexOf(normalize("組別"));
- const wi=headers.indexOf(normalize("執行內容"));
- const pi=headers.indexOf(normalize("執行人員"));
+for(const name of wb.SheetNames){
+const data=XLSX.utils.sheet_to_json(wb.Sheets[name],{
+header:1,defval:"",blankrows:false
+});
+for(let i=0;i<Math.min(data.length,50);i++){
+const h=data[i].map(norm);
+if(["組別","執行內容","執行人員"].every(x=>h.includes(x))){
+rows=data;header=h;start=i+1;sheetName=name;
+break;
+}
+}
+if(rows)break;
+}
+if(!rows)throw Error("找不到必要的三個欄位");
 
- const personMap=new Map(),detailMap=new Map();
- errorData=[];total=0;matched=0;missing=0;score=0;
+const gi=header.indexOf("組別");
+const wi=header.indexOf("執行內容");
+const pi=header.indexOf("執行人員");
 
- sheet.slice(start).forEach((row,j)=>{
- if(normalize(row[gi])!=="前處理")return;
- total++;
- const work=String(row[wi]??"").trim();
- const person=String(row[pi]??"").trim();
- const key=normalize(work);
- if(!work||!person||!rules.has(key)){
- missing++;
- errorData.push([
- start+j+1,person,work,
- !work||!person?"必要欄位空白":"未匹配積分"
- ]);
- return;
- }
- matched++;
- const points=rules.get(key);
- score+=points;
- if(!personMap.has(person)){
- personMap.set(person,{count:0,score:0});
- }
- const p=personMap.get(person);
- p.count++;p.score+=points;
+records=[];errors=[];
+total=0;matched=0;missing=0;totalPoints=0;
 
- const dk=JSON.stringify([person,key]);
- if(!detailMap.has(dk)){
- detailMap.set(dk,{
- person,work,count:0,points,score:0
- });
- }
- const d=detailMap.get(dk);
- d.count++;d.score+=points;
- });
+rows.slice(start).forEach((row,j)=>{
+if(norm(row[gi])!=="前處理")return;
+total++;
+const person=String(row[pi]??"").trim();
+const work=String(row[wi]??"").trim();
+const rule=rules.get(norm(work));
+const excelRow=start+j+1;
 
- peopleData=[...personMap].map(([name,p])=>[
- name,p.count,round(p.score)
- ]).sort((a,b)=>b[2]-a[2]);
+if(!person||!work||!rule){
+missing++;
+errors.push([
+excelRow,person,work,
+!person||!work?"必要欄位空白":"未匹配積分"
+]);
+return;
+}
 
- detailData=[...detailMap.values()].map(d=>[
- d.person,d.work,d.count,d.points,round(d.score)
- ]).sort((a,b)=>a[0].localeCompare(b[0],"zh-Hant"));
+matched++;
+const units=Math.round(rule.score*10);
+totalPoints+=units;
+records.push({
+person,work:rule.name,
+key:norm(work),
+row:excelRow,
+units,
+score:rule.score
+});
+});
 
- document.getElementById("status").textContent=
- "已完成："+file.name;
+buildResults();
+ready=true;
+document.getElementById("status").textContent=
+"完成："+f.name+"｜工作表："+sheetName;
+render();
+}catch(e){
+document.getElementById("status").textContent=
+"匯入失敗："+e.message;
+alert(e.message);
+}
+}
 
- render();
- }catch(e){
- alert("匯入失敗："+e.message);
- }
+function buildResults(){
+const people=new Map();
+const details=new Map();
+const duplicates=new Map();
+
+for(const r of records){
+if(!people.has(r.person)){
+people.set(r.person,{count:0,units:0});
+}
+const p=people.get(r.person);
+p.count++;p.units+=r.units;
+
+const k=JSON.stringify([r.person,r.key]);
+if(!details.has(k)){
+details.set(k,{
+person:r.person,work:r.work,
+count:0,units:0,rows:[],single:r.score
+});
+}
+const d=details.get(k);
+d.count++;d.units+=r.units;d.rows.push(r.row);
+}
+
+peopleRows=[...people].map(([name,p])=>[
+name,p.count,round(p.units/10)
+]).sort((a,b)=>b[2]-a[2]);
+
+detailRows=[...details.values()].map(d=>[
+d.person,d.work,d.count,d.single,
+round(d.units/10),d.rows.join("、")
+]).sort((a,b)=>
+a[0].localeCompare(b[0],"zh-Hant")||
+a[1].localeCompare(b[1],"zh-Hant")
+);
+
+duplicateRows=[];
+for(const d of details.values()){
+if(d.count>1){
+duplicateRows.push([
+d.person,d.work,d.count,d.rows.join("、"),
+"相同人員及執行內容多次出現，非確定重複"
+]);
+}
+}
+duplicateRows.sort((a,b)=>b[2]-a[2]);
+
+const ruleCounts=new Map();
+for(const r of records){
+ruleCounts.set(r.key,(ruleCounts.get(r.key)||0)+1);
+}
+ruleRows=[...rules].map(([key,r])=>{
+const count=ruleCounts.get(key)||0;
+const expected=count*Math.round(r.score*10);
+const actual=records.filter(x=>x.key===key)
+.reduce((s,x)=>s+x.units,0);
+return [
+r.name,count,r.score,round(expected/10),
+round(actual/10),expected===actual?"通過":"異常"
+];
+});
+
 }
 
 function render(){
- const card=(name,value)=>`<div class="card">
- <span>${name}</span><strong>${value}</strong></div>`;
+const peopleUnits=peopleRows.reduce((s,r)=>s+
+Math.round(r[2]*10),0);
+const detailUnits=detailRows.reduce((s,r)=>s+
+Math.round(r[4]*10),0);
+const countOK=total===matched+missing;
+const scoreOK=peopleUnits===detailUnits &&
+detailUnits===totalPoints;
+const rulesOK=ruleRows.every(r=>r[5]==="通過");
 
- document.getElementById("summary").innerHTML=
- card("前處理總筆數",total)+
- card("成功匹配",matched)+
- card("未匹配或缺漏",missing)+
- card("執行人員",peopleData.length)+
- card("已匹配總積分",round(score));
+document.getElementById("summary").innerHTML=
+card("前處理總筆數",fmt(total))+
+card("成功匹配",fmt(matched))+
+card("未匹配或缺漏",fmt(missing))+
+card("執行人員",fmt(peopleRows.length))+
+card("已匹配總積分",fmt(totalPoints/10));
 
- document.getElementById("people").innerHTML=
- table(["執行人員","工作筆數","總積分"],peopleData);
+document.getElementById("people").innerHTML=
+makeTable(["執行人員","工作筆數","總積分"],peopleRows);
 
- document.getElementById("details").innerHTML=
- table(["執行人員","執行內容","筆數","單筆積分","小計"],detailData);
+document.getElementById("details").innerHTML=
+makeTable(["執行人員","執行內容","筆數",
+"單筆積分","小計","原始 Excel 列號"],detailRows);
 
- const countOK=total===matched+missing;
- const peopleSum=round(peopleData.reduce((s,r)=>s+r[2],0));
- const detailSum=round(detailData.reduce((s,r)=>s+r[4],0));
- const scoreOK=Math.abs(peopleSum-detailSum)<0.001 &&
- Math.abs(detailSum-round(score))<0.001;
+document.getElementById("validation").innerHTML=
+`<p class="${countOK?'good':'bad'}">
+筆數驗證：${countOK?'通過':'失敗'}
+（${total} = ${matched} + ${missing}）</p>
+<p class="${scoreOK?'good':'bad'}">
+積分驗證：${scoreOK?'通過':'失敗'}
+（人員總分 ${fmt(peopleUnits/10)}，
+明細總分 ${fmt(detailUnits/10)}）</p>
+<p class="${rulesOK?'good':'bad'}">
+積分規則核對：${rulesOK?'通過':'失敗'}</p>
+<p class="${missing===0?'good':'bad'}">
+資料完整性：${missing===0?'無異常':missing+' 筆待確認'}</p>
+<p class="note">通過代表程式內部加總一致，
+不等於已排除原始資料重複或規則設定錯誤。</p>`;
 
- document.getElementById("validation").innerHTML=
- `<p class="${countOK?'good':'bad'}">
- 筆數驗證：${countOK?'通過':'失敗'}
- (${total} = ${matched} + ${missing})</p>
- <p class="${scoreOK?'good':'bad'}">
- 積分驗證：${scoreOK?'通過':'失敗'}
- （人員總分 ${peopleSum}，明細總分 ${detailSum}）</p>
- <p class="${missing===0?'good':'bad'}">
- 資料完整性：${missing===0?'無異常':'有 '+missing+' 筆待確認'}</p>
- <p class="note">未匹配工作不納入已匹配總積分，
- 請先核對異常清單。</p>`;
+document.getElementById("errors").innerHTML=
+makeTable(["Excel列號","執行人員","執行內容","異常原因"],errors);
 
- document.getElementById("errors").innerHTML=
- table(["Excel列號","執行人員","執行內容","異常原因"],errorData);
+document.getElementById("ruleCheck").innerHTML=
+`<p class="${rulesOK?'good':'bad'}">
+${rulesOK?'全部規則核對通過':'發現規則計算異常'}</p>`+
+makeTable(["執行內容","筆數","單筆積分",
+"預期積分","實際積分","結果"],ruleRows);
+
+document.getElementById("duplicateResult").innerHTML=
+`<p>有 ${duplicateRows.length} 組相同人員與工作名稱出現多筆。</p>
+<p class="note">這不是確定重複，也不會影響總積分。
+若需判斷是否同一筆工作重複登錄，
+必須增加委託單號或其他唯一識別欄位。</p>`+
+makeTable(["執行人員","執行內容","筆數",
+"Excel列號","說明"],duplicateRows);
+
+const select=document.getElementById("personSelect");
+select.innerHTML='<option value="">請選擇人員</option>';
+peopleRows.forEach((p,i)=>{
+const option=document.createElement("option");
+option.value=p[0];
+option.textContent=p[0];
+select.appendChild(option);
+});
+document.getElementById("personResult").innerHTML="";
+}
+
+function showPerson(){
+const name=document.getElementById("personSelect").value;
+const target=document.getElementById("personResult");
+if(!name){target.innerHTML="";return;}
+
+const rows=detailRows.filter(r=>r[0]===name);
+const raw=records.filter(r=>r.person===name);
+const count=rows.reduce((s,r)=>s+r[2],0);
+const units=raw.reduce((s,r)=>s+r.units,0);
+const detailUnits=rows.reduce((s,r)=>s+
+Math.round(r[4]*10),0);
+const valid=count===raw.length&&units===detailUnits;
+
+target.innerHTML=
+`<h3>${safe(name)} 的個人驗證</h3>
+<p>工作筆數：${count}</p>
+<p>總積分：${fmt(units/10)} counts</p>
+<p class="${valid?'good':'bad'}">
+${valid?'個人明細核對通過':'個人明細核對異常'}</p>`+
+makeTable(["執行人員","執行內容","筆數",
+"單筆積分","小計","Excel列號"],rows);
 }
 
 function exportCSV(type){
- const configs={
- people:[["執行人員","工作筆數","總積分"],peopleData],
- details:[["執行人員","執行內容","筆數","單筆積分","小計"],detailData],
- errors:[["Excel列號","執行人員","執行內容","異常原因"],errorData]
- };
- const [head,rows]=configs[type];
- const csv=[head,...rows].map(row=>
- row.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")
- ).join("\r\n");
- const blob=new Blob(["\ufeff"+csv],{
- type:"text/csv;charset=utf-8"
- });
- const url=URL.createObjectURL(blob);
- const a=document.createElement("a");
- a.href=url;a.download=type+".csv";a.click();
- URL.revokeObjectURL(url);
+if(!ready){alert("請先匯入 Excel");return;}
+
+const person=document.getElementById("personSelect").value;
+const personal=detailRows.filter(r=>r[0]===person);
+if(type==="personal"&&!person){
+alert("請先選擇執行人員");return;
+}
+
+const configs={
+people:[["執行人員","工作筆數","總積分"],peopleRows],
+details:[["執行人員","執行內容","筆數","單筆積分","小計","Excel列號"],detailRows],
+errors:[["Excel列號","執行人員","執行內容","異常原因"],errors],
+personal:[["執行人員","執行內容","筆數","單筆積分","小計","Excel列號"],personal],
+rules:[["執行內容","筆數","單筆積分","預期積分","實際積分","結果"],ruleRows],
+duplicates:[["執行人員","執行內容","筆數","Excel列號","說明"],duplicateRows]
+};
+
+const [head,data]=configs[type];
+const csv=[head,...data].map(row=>
+row.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")
+).join("\r\n");
+
+const blob=new Blob(["\ufeff"+csv],{
+type:"text/csv;charset=utf-8"
+});
+const url=URL.createObjectURL(blob);
+const a=document.createElement("a");
+a.href=url;
+a.download="counts_v4_"+type+".csv";
+document.body.appendChild(a);
+a.click();
+a.remove();
+setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 </script>
 </body>
